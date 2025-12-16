@@ -23,11 +23,11 @@ class LLMResponse:
     usage: dict[str, int] | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class EmbeddingResponse:
-    """Response from an embedding call."""
+    """Response from an embedding call (immutable)."""
 
-    embedding: list[float]
+    embedding: tuple[float, ...]
     model: str
     provider: str
     dimensions: int

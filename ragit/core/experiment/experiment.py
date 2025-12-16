@@ -49,7 +49,7 @@ class Chunk:
     content: str
     doc_id: str
     chunk_index: int
-    embedding: list[float] | None = None
+    embedding: tuple[float, ...] | list[float] | None = None
 
 
 @dataclass
@@ -76,37 +76,60 @@ class EvaluationScores:
 
 
 class SimpleVectorStore:
-    """Simple in-memory vector store."""
+    """Simple in-memory vector store with pre-normalized embeddings for fast search.
+
+    Note: This class is NOT thread-safe.
+    """
 
     def __init__(self) -> None:
         self.chunks: list[Chunk] = []
+        self._embedding_matrix: np.ndarray[Any, np.dtype[np.float64]] | None = None  # Pre-normalized
 
     def add(self, chunks: list[Chunk]) -> None:
-        """Add chunks to the store."""
+        """Add chunks to the store and rebuild pre-normalized embedding matrix."""
         self.chunks.extend(chunks)
+        self._rebuild_matrix()
+
+    def _rebuild_matrix(self) -> None:
+        """Rebuild and pre-normalize the embedding matrix from chunks."""
+        embeddings = [c.embedding for c in self.chunks if c.embedding is not None]
+        if embeddings:
+            matrix = np.array(embeddings, dtype=np.float64)
+            # Pre-normalize for fast cosine similarity
+            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+            norms[norms == 0] = 1  # Avoid division by zero
+            self._embedding_matrix = matrix / norms
+        else:
+            self._embedding_matrix = None
 
     def clear(self) -> None:
         """Clear all chunks."""
         self.chunks = []
+        self._embedding_matrix = None
 
-    def search(self, query_embedding: list[float], top_k: int = 5) -> list[tuple[Chunk, float]]:
-        """Search for similar chunks."""
-        if not self.chunks:
+    def search(self, query_embedding: tuple[float, ...] | list[float], top_k: int = 5) -> list[tuple[Chunk, float]]:
+        """Search for similar chunks using pre-normalized cosine similarity."""
+        if not self.chunks or self._embedding_matrix is None:
             return []
 
-        scores = []
-        query = np.array(query_embedding)
+        # Normalize query vector
+        query_vec = np.array(query_embedding, dtype=np.float64)
+        query_norm = np.linalg.norm(query_vec)
+        if query_norm == 0:
+            return []
+        query_normalized = query_vec / query_norm
 
-        for chunk in self.chunks:
-            if chunk.embedding:
-                chunk_emb = np.array(chunk.embedding)
-                # Cosine similarity
-                similarity = np.dot(query, chunk_emb) / (np.linalg.norm(query) * np.linalg.norm(chunk_emb))
-                scores.append((chunk, float(similarity)))
+        # Fast cosine similarity: matrix is pre-normalized, just dot product
+        similarities = self._embedding_matrix @ query_normalized
 
-        # Sort by similarity descending
-        scores.sort(key=lambda x: x[1], reverse=True)
-        return scores[:top_k]
+        # Get top_k indices efficiently
+        if len(similarities) <= top_k:
+            top_indices = np.argsort(similarities)[::-1]
+        else:
+            top_indices = np.argpartition(similarities, -top_k)[-top_k:]
+            top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
+
+        return [(self.chunks[i], float(similarities[i])) for i in top_indices]
 
 
 class RagitExperiment:
@@ -233,18 +256,23 @@ class RagitExperiment:
         return chunks
 
     def _build_index(self, config: RAGConfig) -> None:
-        """Build vector index with given configuration."""
+        """Build vector index with given configuration using batch embedding."""
         self.vector_store.clear()
-        all_chunks = []
+        all_chunks: list[Chunk] = []
 
         # Chunk all documents
         for doc in self.documents:
             chunks = self._chunk_document(doc, config.chunk_size, config.chunk_overlap)
             all_chunks.extend(chunks)
 
-        # Embed all chunks
-        for chunk in all_chunks:
-            response = self.provider.embed(chunk.content, config.embedding_model)
+        if not all_chunks:
+            return
+
+        # Batch embed all chunks at once (single API call)
+        texts = [chunk.content for chunk in all_chunks]
+        responses = self.provider.embed_batch(texts, config.embedding_model)
+
+        for chunk, response in zip(all_chunks, responses, strict=True):
             chunk.embedding = response.embedding
 
         self.vector_store.add(all_chunks)
@@ -368,7 +396,7 @@ Respond with ONLY a number 0-100."""
         for qa in self.benchmark:
             # Retrieve
             chunks = self._retrieve(qa.question, config)
-            context = "\n\n".join([f"[{c.doc_id}]: {c.content}" for c in chunks])
+            context = "\n\n".join(f"[{c.doc_id}]: {c.content}" for c in chunks)
 
             # Generate
             answer = self._generate(qa.question, context, config)
@@ -377,11 +405,11 @@ Respond with ONLY a number 0-100."""
             scores = self._evaluate_response(qa.question, answer, qa.ground_truth, context, config)
             all_scores.append(scores)
 
-        # Aggregate scores
+        # Aggregate scores (use generators for memory efficiency)
         avg_correctness = np.mean([s.answer_correctness for s in all_scores])
         avg_relevance = np.mean([s.context_relevance for s in all_scores])
         avg_faithfulness = np.mean([s.faithfulness for s in all_scores])
-        combined = np.mean([s.combined_score for s in all_scores])
+        combined = float(np.mean([s.combined_score for s in all_scores]))
 
         execution_time = time.time() - start_time
 

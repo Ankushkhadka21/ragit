@@ -6,16 +6,23 @@
 High-level RAG Assistant for document Q&A and code generation.
 
 Provides a simple interface for RAG-based tasks.
+
+Note: This class is NOT thread-safe. Do not share instances across threads.
 """
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ragit.config import config
 from ragit.core.experiment.experiment import Chunk, Document
 from ragit.loaders import chunk_document, chunk_rst_sections, load_directory, load_text
 from ragit.providers import OllamaProvider
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 class RAGAssistant:
@@ -41,6 +48,10 @@ class RAGAssistant:
         Chunk size for splitting documents (default: 512).
     chunk_overlap : int, optional
         Overlap between chunks (default: 50).
+
+    Note
+    ----
+    This class is NOT thread-safe. Each thread should have its own instance.
 
     Examples
     --------
@@ -75,9 +86,9 @@ class RAGAssistant:
         # Load documents if path provided
         self.documents = self._load_documents(documents)
 
-        # Index chunks
-        self._chunks: list[Chunk] = []
-        self._embeddings: list[list[float]] = []
+        # Index chunks - embeddings stored as pre-normalized numpy matrix for fast search
+        self._chunks: tuple[Chunk, ...] = ()
+        self._embedding_matrix: NDArray[np.float64] | None = None  # Pre-normalized
         self._build_index()
 
     def _load_documents(self, documents: list[Document] | str | Path) -> list[Document]:
@@ -91,17 +102,16 @@ class RAGAssistant:
             return [load_text(path)]
 
         if path.is_dir():
-            docs = []
-            for pattern in ["*.txt", "*.md", "*.rst"]:
+            docs: list[Document] = []
+            for pattern in ("*.txt", "*.md", "*.rst"):
                 docs.extend(load_directory(path, pattern))
             return docs
 
         raise ValueError(f"Invalid documents source: {documents}")
 
     def _build_index(self) -> None:
-        """Build vector index from documents."""
-        self._chunks = []
-        self._embeddings = []
+        """Build vector index from documents using batch embedding."""
+        all_chunks: list[Chunk] = []
 
         for doc in self.documents:
             # Use RST section chunking for .rst files, otherwise regular chunking
@@ -109,21 +119,33 @@ class RAGAssistant:
                 chunks = chunk_rst_sections(doc.content, doc.id)
             else:
                 chunks = chunk_document(doc, self.chunk_size, self.chunk_overlap)
+            all_chunks.extend(chunks)
 
-            for chunk in chunks:
-                response = self.provider.embed(chunk.content, self.embedding_model)
-                chunk.embedding = response.embedding
-                self._chunks.append(chunk)
-                self._embeddings.append(response.embedding)
+        if not all_chunks:
+            self._chunks = ()
+            self._embedding_matrix = None
+            return
 
-    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        """Calculate cosine similarity between vectors."""
-        a_arr, b_arr = np.array(a), np.array(b)
-        return float(np.dot(a_arr, b_arr) / (np.linalg.norm(a_arr) * np.linalg.norm(b_arr)))
+        # Batch embed all chunks at once (single API call)
+        texts = [chunk.content for chunk in all_chunks]
+        responses = self.provider.embed_batch(texts, self.embedding_model)
+
+        # Build embedding matrix directly (skip storing in chunks to avoid duplication)
+        embedding_matrix = np.array([response.embedding for response in responses], dtype=np.float64)
+
+        # Pre-normalize for fast cosine similarity (normalize once, use many times)
+        norms = np.linalg.norm(embedding_matrix, axis=1, keepdims=True)
+        norms[norms == 0] = 1  # Avoid division by zero
+
+        # Store as immutable tuple and pre-normalized numpy matrix
+        self._chunks = tuple(all_chunks)
+        self._embedding_matrix = embedding_matrix / norms
 
     def retrieve(self, query: str, top_k: int = 3) -> list[tuple[Chunk, float]]:
         """
         Retrieve relevant chunks for a query.
+
+        Uses vectorized cosine similarity for fast search over all chunks.
 
         Parameters
         ----------
@@ -143,19 +165,30 @@ class RAGAssistant:
         >>> for chunk, score in results:
         ...     print(f"{score:.2f}: {chunk.content[:100]}...")
         """
-        if not self._chunks:
+        if not self._chunks or self._embedding_matrix is None:
             return []
 
+        # Get query embedding and normalize
         query_response = self.provider.embed(query, self.embedding_model)
-        query_emb = query_response.embedding
+        query_vec = np.array(query_response.embedding, dtype=np.float64)
+        query_norm = np.linalg.norm(query_vec)
+        if query_norm == 0:
+            return []
+        query_normalized = query_vec / query_norm
 
-        scores = [
-            (chunk, self._cosine_similarity(query_emb, emb))
-            for chunk, emb in zip(self._chunks, self._embeddings, strict=True)
-        ]
-        scores.sort(key=lambda x: x[1], reverse=True)
+        # Fast cosine similarity: matrix is pre-normalized, just dot product
+        similarities = self._embedding_matrix @ query_normalized
 
-        return scores[:top_k]
+        # Get top_k indices using argpartition (faster than full sort for large arrays)
+        if len(similarities) <= top_k:
+            top_indices = np.argsort(similarities)[::-1]
+        else:
+            # Partial sort - only find top_k elements
+            top_indices = np.argpartition(similarities, -top_k)[-top_k:]
+            # Sort the top_k by score
+            top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
+
+        return [(self._chunks[i], float(similarities[i])) for i in top_indices]
 
     def get_context(self, query: str, top_k: int = 3) -> str:
         """
@@ -174,7 +207,7 @@ class RAGAssistant:
             Formatted context string.
         """
         results = self.retrieve(query, top_k)
-        return "\n\n---\n\n".join([chunk.content for chunk, _ in results])
+        return "\n\n---\n\n".join(chunk.content for chunk, _ in results)
 
     def generate(
         self,

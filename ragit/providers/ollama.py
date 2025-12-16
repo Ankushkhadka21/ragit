@@ -180,7 +180,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
             self._current_dimensions = len(embedding)
 
             return EmbeddingResponse(
-                embedding=embedding,
+                embedding=tuple(embedding),
                 model=model,
                 provider=self.provider_name,
                 dimensions=len(embedding),
@@ -209,7 +209,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
 
             return [
                 EmbeddingResponse(
-                    embedding=emb,
+                    embedding=tuple(emb),
                     model=model,
                     provider=self.provider_name,
                     dimensions=len(emb),

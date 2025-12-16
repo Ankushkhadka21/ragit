@@ -238,7 +238,7 @@ class TestOllamaProviderEmbed:
 
             response = provider.embed(text="Hello", model="mxbai-embed-large")
 
-            assert response.embedding == embedding
+            assert response.embedding == tuple(embedding)
             assert response.model == "mxbai-embed-large"
             assert response.provider == "ollama"
             assert response.dimensions == 1024
@@ -310,7 +310,7 @@ class TestOllamaProviderEmbedBatch:
             responses = provider.embed_batch(texts=["Hello", "World", "Test"], model="mxbai-embed-large")
 
             assert len(responses) == 3
-            assert responses[0].embedding == embeddings[0]
+            assert responses[0].embedding == tuple(embeddings[0])
             assert all(r.dimensions == 1024 for r in responses)
 
     def test_embed_batch_error(self):

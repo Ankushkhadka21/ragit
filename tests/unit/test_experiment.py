@@ -228,6 +228,21 @@ class TestRagitExperiment:
 
         provider.embed.side_effect = mock_embed
 
+        # Mock embed_batch to return consistent embeddings
+        def mock_embed_batch(texts, model):
+            responses = []
+            for text in texts:
+                hash_val = hash(text) % 1000
+                np.random.seed(hash_val)
+                emb = np.random.randn(1024)
+                emb = emb / np.linalg.norm(emb)
+                response = MagicMock()
+                response.embedding = emb.tolist()
+                responses.append(response)
+            return responses
+
+        provider.embed_batch.side_effect = mock_embed_batch
+
         # Mock generate
         def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
             response = MagicMock()
@@ -474,6 +489,20 @@ class TestRagitExperimentVerbose:
 
         provider.embed.side_effect = mock_embed
 
+        def mock_embed_batch(texts, model):
+            responses = []
+            for text in texts:
+                hash_val = hash(text) % 1000
+                np.random.seed(hash_val)
+                emb = np.random.randn(1024)
+                emb = emb / np.linalg.norm(emb)
+                response = MagicMock()
+                response.embedding = emb.tolist()
+                responses.append(response)
+            return responses
+
+        provider.embed_batch.side_effect = mock_embed_batch
+
         def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
             response = MagicMock()
             if "Rate" in prompt:
@@ -545,6 +574,16 @@ class TestScoreExtraction:
             return response
 
         provider.embed.side_effect = mock_embed
+
+        def mock_embed_batch(texts, model):
+            responses = []
+            for _ in texts:
+                response = MagicMock()
+                response.embedding = [0.1] * 100
+                responses.append(response)
+            return responses
+
+        provider.embed_batch.side_effect = mock_embed_batch
         return provider
 
     def test_score_extraction_no_number(self, mock_provider_scores):

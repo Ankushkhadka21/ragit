@@ -33,6 +33,21 @@ def mock_provider():
 
     provider.embed.side_effect = mock_embed
 
+    def mock_embed_batch(texts, model):
+        # Create deterministic embeddings for batch
+        responses = []
+        for text in texts:
+            hash_val = hash(text) % 1000
+            np.random.seed(hash_val)
+            emb = np.random.randn(1024)
+            emb = emb / np.linalg.norm(emb)
+            response = MagicMock()
+            response.embedding = emb.tolist()
+            responses.append(response)
+        return responses
+
+    provider.embed_batch.side_effect = mock_embed_batch
+
     def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
         response = MagicMock()
         response.text = "Generated response based on context."
@@ -260,6 +275,16 @@ class TestRAGAssistantGenerateCode:
 
         mock_prov.embed.side_effect = mock_embed
 
+        def mock_embed_batch(texts, model):
+            responses = []
+            for _ in texts:
+                response = MagicMock()
+                response.embedding = [0.1] * 1024
+                responses.append(response)
+            return responses
+
+        mock_prov.embed_batch.side_effect = mock_embed_batch
+
         def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
             response = MagicMock()
             response.text = "```python\nprint('hello')\n```"
@@ -297,36 +322,3 @@ class TestRAGAssistantProperties:
         assistant = RAGAssistant(sample_documents, provider=mock_provider)
 
         assert assistant.num_documents == 3
-
-
-class TestRAGAssistantCosine:
-    """Tests for cosine similarity calculation."""
-
-    def test_cosine_identical_vectors(self, sample_documents, mock_provider):
-        """Test cosine similarity of identical vectors."""
-        assistant = RAGAssistant(sample_documents, provider=mock_provider)
-
-        vec = [1.0, 0.0, 0.0]
-        sim = assistant._cosine_similarity(vec, vec)
-
-        assert sim == pytest.approx(1.0, rel=0.001)
-
-    def test_cosine_orthogonal_vectors(self, sample_documents, mock_provider):
-        """Test cosine similarity of orthogonal vectors."""
-        assistant = RAGAssistant(sample_documents, provider=mock_provider)
-
-        vec1 = [1.0, 0.0, 0.0]
-        vec2 = [0.0, 1.0, 0.0]
-        sim = assistant._cosine_similarity(vec1, vec2)
-
-        assert sim == pytest.approx(0.0, abs=0.001)
-
-    def test_cosine_opposite_vectors(self, sample_documents, mock_provider):
-        """Test cosine similarity of opposite vectors."""
-        assistant = RAGAssistant(sample_documents, provider=mock_provider)
-
-        vec1 = [1.0, 0.0, 0.0]
-        vec2 = [-1.0, 0.0, 0.0]
-        sim = assistant._cosine_similarity(vec1, vec2)
-
-        assert sim == pytest.approx(-1.0, rel=0.001)
