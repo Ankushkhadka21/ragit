@@ -69,3 +69,6 @@ venv/
 
 # Issue database
 .issue.db
+
+# Documentation build
+docs/_build/
