@@ -232,7 +232,8 @@ class TestOllamaProviderEmbed:
             embedding = [0.1] * 1024
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {"embeddings": [embedding], "model": "mxbai-embed-large"}
+            # New Ollama API format: "embedding" (singular, not wrapped in list)
+            mock_resp.json.return_value = {"embedding": embedding, "model": "mxbai-embed-large"}
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 
@@ -245,7 +246,7 @@ class TestOllamaProviderEmbed:
 
             # Verify embedding URL used and no auth
             call_args = mock_post.call_args
-            assert "/api/embed" in call_args[0][0]
+            assert "/api/embeddings" in call_args[0][0]
             assert "Authorization" not in call_args[1]["headers"]
 
     def test_embed_updates_dimensions(self):
@@ -256,7 +257,8 @@ class TestOllamaProviderEmbed:
             embedding = [0.1] * 512  # Different dimension
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {"embeddings": [embedding]}
+            # New Ollama API format: "embedding" (singular, not wrapped in list)
+            mock_resp.json.return_value = {"embedding": embedding}
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 
@@ -272,7 +274,8 @@ class TestOllamaProviderEmbed:
         with patch("requests.post") as mock_post:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {"embeddings": [[]]}
+            # New Ollama API format: "embedding" (singular)
+            mock_resp.json.return_value = {"embedding": []}
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 
@@ -301,11 +304,16 @@ class TestOllamaProviderEmbedBatch:
 
         with patch("requests.post") as mock_post:
             embeddings = [[0.1] * 1024, [0.2] * 1024, [0.3] * 1024]
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {"embeddings": embeddings, "model": "mxbai-embed-large"}
-            mock_resp.raise_for_status.return_value = None
-            mock_post.return_value = mock_resp
+            # embed_batch loops through texts, making one request per text
+            # Each response uses new Ollama API format: "embedding" (singular)
+            mock_responses = []
+            for emb in embeddings:
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"embedding": emb, "model": "mxbai-embed-large"}
+                mock_resp.raise_for_status.return_value = None
+                mock_responses.append(mock_resp)
+            mock_post.side_effect = mock_responses
 
             responses = provider.embed_batch(texts=["Hello", "World", "Test"], model="mxbai-embed-large")
 

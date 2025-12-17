@@ -164,15 +164,15 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
 
         try:
             response = requests.post(
-                f"{self.embedding_url}/api/embed",
+                f"{self.embedding_url}/api/embeddings",
                 headers=self._get_headers(include_auth=False),
-                json={"model": model, "input": text},
+                json={"model": model, "prompt": text},
                 timeout=self.timeout,
             )
             response.raise_for_status()
             data = response.json()
 
-            embedding = data.get("embeddings", [[]])[0]
+            embedding = data.get("embedding", [])
             if not embedding:
                 raise ValueError("Empty embedding returned from Ollama")
 
@@ -189,33 +189,38 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
             raise ConnectionError(f"Ollama embed failed: {e}") from e
 
     def embed_batch(self, texts: list[str], model: str) -> list[EmbeddingResponse]:
-        """Generate embeddings for multiple texts (uses embedding_url, no auth for local)."""
+        """Generate embeddings for multiple texts (uses embedding_url, no auth for local).
+
+        Note: Ollama /api/embeddings only supports single prompts, so we loop.
+        """
         self._current_embed_model = model
         self._current_dimensions = self.EMBEDDING_DIMENSIONS.get(model, 768)
 
+        results = []
         try:
-            response = requests.post(
-                f"{self.embedding_url}/api/embed",
-                headers=self._get_headers(include_auth=False),
-                json={"model": model, "input": texts},
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            embeddings = data.get("embeddings", [])
-            if embeddings:
-                self._current_dimensions = len(embeddings[0])
-
-            return [
-                EmbeddingResponse(
-                    embedding=tuple(emb),
-                    model=model,
-                    provider=self.provider_name,
-                    dimensions=len(emb),
+            for text in texts:
+                response = requests.post(
+                    f"{self.embedding_url}/api/embeddings",
+                    headers=self._get_headers(include_auth=False),
+                    json={"model": model, "prompt": text},
+                    timeout=self.timeout,
                 )
-                for emb in embeddings
-            ]
+                response.raise_for_status()
+                data = response.json()
+
+                embedding = data.get("embedding", [])
+                if embedding:
+                    self._current_dimensions = len(embedding)
+
+                results.append(
+                    EmbeddingResponse(
+                        embedding=tuple(embedding),
+                        model=model,
+                        provider=self.provider_name,
+                        dimensions=len(embedding),
+                    )
+                )
+            return results
         except requests.RequestException as e:
             raise ConnectionError(f"Ollama batch embed failed: {e}") from e
 
